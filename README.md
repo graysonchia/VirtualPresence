@@ -1,20 +1,21 @@
 # VirtualPresence
 
-VirtualPresence is an AI-native virtual assistant platform. Phase 2 implements
+VirtualPresence is an AI-native virtual assistant platform. Phase 4 combines
 local face enrollment, identification, expression classification, and
-spatial/short-burst anti-spoofing signals. A FastAPI API stores SFace embeddings and
-recognition results in PostgreSQL, while a React page captures webcam frames for
-end-to-end testing.
+short-burst anti-spoofing with personalized Anthropic-powered text and voice
+conversation. FastAPI persists identities, recognition context, interaction
+sessions, and messages in PostgreSQL, while React provides webcam, chat,
+microphone recording, and spoken-response interfaces for end-to-end testing.
 
-This phase intentionally does **not** implement avatars, an LLM, or
-conversations. The conversation tables exist for the agreed data foundation,
-but no conversation endpoints are exposed.
+This phase intentionally does **not** implement avatar rendering or lip-sync.
 
 ## Stack
 
 - Backend: FastAPI, async SQLAlchemy 2.0, asyncpg, Alembic, PostgreSQL
 - Jobs: Celery with Memurai (Redis-compatible on Windows)
 - Face pipeline: OpenCV YuNet + SFace, FER+ emotion ONNX, active liveness challenge
+- Conversation: Anthropic Python SDK, automatic language detection, local mock mode
+- Voice: local faster-whisper STT and multilingual Microsoft Edge TTS
 - Frontend: React 19, Vite, Tailwind CSS, TanStack Query, TypeScript
 
 ## Repository layout
@@ -29,7 +30,9 @@ VirtualPresence/
 │   │   ├── models/              # SQLAlchemy models
 │   │   ├── schemas/             # API schemas
 │   │   └── services/
-│   │       └── face/            # Recognition, emotion, and liveness
+│   │       ├── conversation/    # Language detection, chat, and Anthropic client
+│   │       ├── face/            # Recognition, emotion, and liveness
+│   │       └── voice/           # Local transcription and speech synthesis
 │   ├── scripts/
 │   └── tests/
 └── frontend/
@@ -136,6 +139,9 @@ The script performs the exact local setup:
 5. Runs `alembic upgrade head`.
 6. Installs frontend packages.
 
+The multilingual faster-whisper `base` model downloads automatically on the
+first transcription request and is cached for subsequent runs.
+
 The local `.env` files are already configured for development. Copy the example
 files if they are absent:
 
@@ -213,6 +219,10 @@ Visit <http://localhost:5173>, allow camera access, then:
 1. Select **Enroll**, enter a name, center exactly one face, and capture.
 2. Select **Identify** and capture another frame.
 3. Review the identity, emotion, and liveness badges.
+4. After a successful live match, use the unlocked chat panel. Type a message
+   or tap the microphone, speak, and tap stop.
+5. The assistant reply is spoken automatically unless the speaker button is
+   muted. Messages and transcripts are restored from PostgreSQL.
 
 Camera access works on `localhost`. A non-local production site must be served
 over HTTPS for `getUserMedia`.
@@ -224,6 +234,10 @@ over HTTPS for `getUserMedia`.
 | `POST` | `/face/enroll` | Multipart `image`, `name`, optional `email`, optional `preferred_language` |
 | `POST` | `/face/identify` | Multipart `image` plus optional repeated `frames`; returns identity, emotion, and liveness |
 | `GET` | `/face/users` | Lists enrolled users |
+| `POST` | `/conversation/message` | JSON `{ "user_id", "message" }`; returns the assistant reply and detected input language |
+| `GET` | `/conversation/users/{user_id}/history` | Full persisted message history for a recently verified user |
+| `POST` | `/voice/transcribe` | Multipart `audio`; returns transcript, detected language, and language confidence |
+| `POST` | `/voice/synthesize` | JSON `{ "text", "language" }`; returns inline MP3 audio |
 | `GET` | `/health` | API health check |
 
 PowerShell example with an existing image:
@@ -249,6 +263,138 @@ no-face, unmatched, and suspected spoof results. Stored analysis includes
 `liveness_confidence`. When liveness fails, the API returns
 `outcome: "spoof_detected"` and may still include the candidate user, but the
 frontend clearly labels that identity as unverified.
+
+## Anthropic conversation setup
+
+Conversation mock mode is enabled by default, so the complete API and frontend
+flow works without credits or an API key. The mock produces deterministic,
+identity-, emotion-, and language-aware template replies:
+
+```dotenv
+LLM_MOCK_MODE=true
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=claude-sonnet-4-6
+```
+
+To use the live Anthropic API, edit `backend\.env`:
+
+```dotenv
+LLM_MOCK_MODE=false
+ANTHROPIC_API_KEY=your_anthropic_api_key
+ANTHROPIC_MODEL=claude-sonnet-4-6
+```
+
+Restart Uvicorn after changing the environment. The implementation uses the
+official [Anthropic Python SDK](https://github.com/anthropics/anthropic-sdk-python)
+and its async messages client. The user's input language is detected locally;
+the model is instructed to answer entirely in that language and to adapt its
+tone gently to the latest emotion signal without presenting it as a diagnosis.
+
+As a basic access guard, conversation routes require a successful live
+recognition event for that user within the previous 300 seconds. Change
+`CONVERSATION_RECOGNITION_TTL_SECONDS` in `backend\.env` if needed. A new
+recognition begins a new interaction session; subsequent messages in that visit
+reuse recent history, and the history endpoint returns messages across all
+sessions. This time-window check is not a replacement for authenticated
+application sessions in a production deployment.
+
+PowerShell example after the frontend or `/face/identify` has produced a recent
+verified recognition:
+
+```powershell
+$MessageBody = @{
+    user_id = "recognized-user-uuid"
+    message = "Hello, can you help me plan my day?"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+    -Method Post `
+    -Uri "http://localhost:8000/conversation/message" `
+    -ContentType "application/json" `
+    -Body $MessageBody
+```
+
+Voice-originated conversation messages use the same endpoint with
+`audio_transcript_of` instead of `message`. Exactly one input field is required:
+
+```powershell
+$VoiceMessageBody = @{
+    user_id = "recognized-user-uuid"
+    audio_transcript_of = "Hello, this was transcribed from my recording."
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+    -Method Post `
+    -Uri "http://localhost:8000/conversation/message" `
+    -ContentType "application/json" `
+    -Body $VoiceMessageBody
+```
+
+## Voice setup on Windows
+
+Speech-to-text uses
+[faster-whisper](https://github.com/SYSTRAN/faster-whisper) with the multilingual
+`base` model on CPU using `int8` quantization. Its PyAV dependency bundles the
+required FFmpeg libraries, so no separate FFmpeg executable is needed. The first
+transcription needs internet access to download the model; transcription is
+local after the model is cached. Windows may warn that the Hugging Face cache
+cannot use symlinks unless Developer Mode is enabled; the fallback cache still
+works and does not require administrator privileges, but can use more disk space.
+
+The defaults are suitable for a typical Windows development machine:
+
+```dotenv
+STT_MODEL_SIZE=base
+STT_DEVICE=cpu
+STT_COMPUTE_TYPE=int8
+STT_BEAM_SIZE=3
+MAX_AUDIO_UPLOAD_BYTES=26214400
+```
+
+For a CUDA installation, follow faster-whisper's current CUDA 12 and cuDNN
+requirements before setting `STT_DEVICE=cuda` and an appropriate compute type.
+The CPU configuration is the supported default and requires no NVIDIA software.
+
+Text-to-speech uses
+[edge-tts](https://github.com/rany2/edge-tts), selecting Mandarin
+`zh-CN-XiaoxiaoNeural` for `zh`, English `en-US-AriaNeural` for `en`, and
+matching voices for the other languages supported by the conversation layer.
+It needs internet access because it calls Microsoft's online Edge speech
+service, but it needs no API key.
+
+```dotenv
+TTS_DEFAULT_VOICE=en-US-AriaNeural
+TTS_MANDARIN_VOICE=zh-CN-XiaoxiaoNeural
+TTS_MAX_TEXT_CHARACTERS=5000
+```
+
+The transcription endpoint accepts WebM/Opus, Ogg, MP4/M4A, MP3, and WAV.
+Browser recording works on `localhost`; deployed sites require HTTPS for
+microphone access. Autoplay is attempted after each user-initiated exchange,
+but restrictive browser policies can still require a further click.
+
+PowerShell API examples:
+
+```powershell
+$AudioForm = @{
+    audio = Get-Item "C:\path\to\recording.webm"
+}
+Invoke-RestMethod `
+    -Method Post `
+    -Uri "http://localhost:8000/voice/transcribe" `
+    -Form $AudioForm
+
+$SpeechBody = @{
+    text = "很高兴再次见到你。"
+    language = "zh"
+} | ConvertTo-Json
+Invoke-WebRequest `
+    -Method Post `
+    -Uri "http://localhost:8000/voice/synthesize" `
+    -ContentType "application/json" `
+    -Body $SpeechBody `
+    -OutFile ".\virtualpresence-reply.mp3"
+```
 
 ## Liveness calibration
 

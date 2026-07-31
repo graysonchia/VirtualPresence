@@ -19,7 +19,8 @@ app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     description=(
-        "Face enrollment, identification, emotion, and liveness analysis API."
+        "Face enrollment, identity-aware context, and personalized "
+        "text and voice conversation API."
     ),
     debug=settings.app_debug,
     lifespan=lifespan,

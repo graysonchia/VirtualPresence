@@ -15,18 +15,36 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+async function errorFromResponse(response: Response): Promise<ApiError> {
+  const body = (await response.json().catch(() => null)) as {
+    detail?: string;
+  } | null;
+  return new ApiError(
+    body?.detail ?? `Request failed with status ${response.status}.`,
+    response.status,
+  );
+}
+
+export async function request<T>(
+  path: string,
+  options?: RequestInit,
+): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, options);
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as {
-      detail?: string;
-    } | null;
-    throw new ApiError(
-      body?.detail ?? `Request failed with status ${response.status}.`,
-      response.status,
-    );
+    throw await errorFromResponse(response);
   }
   return response.json() as Promise<T>;
+}
+
+export async function requestBlob(
+  path: string,
+  options?: RequestInit,
+): Promise<Blob> {
+  const response = await fetch(`${API_URL}${path}`, options);
+  if (!response.ok) {
+    throw await errorFromResponse(response);
+  }
+  return response.blob();
 }
 
 export async function enrollFace(input: {

@@ -20,18 +20,50 @@ export interface EnrollmentResponse {
 }
 
 export interface IdentificationResponse {
-    outcome: RecognitionOutcome;
-    confidence: number;
-    user: EnrolledUser | null;
-    faces_detected: number;
-    detected_emotion: string | null;
-    emotion_confidence: number | null;
-    emotion_scores: Record<string, number>;
-    is_live: boolean;
-    liveness_confidence: number;
+  outcome: RecognitionOutcome;
+  confidence: number;
+  user: EnrolledUser | null;
+  faces_detected: number;
+  detected_emotion: string | null;
+  emotion_confidence: number | null;
+  emotion_scores: Record<string, number>;
+  is_live: boolean;
+  liveness_confidence: number;
 }
 
 export interface UserListResponse {
   users: EnrolledUser[];
   count: number;
+}
+
+export type ConversationRole = "user" | "assistant";
+
+export interface ConversationHistoryMessage {
+  id: string;
+  session_id: string;
+  role: ConversationRole;
+  content: string;
+  timestamp: string;
+}
+
+export interface ConversationHistoryResponse {
+  user_id: string;
+  user_name: string;
+  messages: ConversationHistoryMessage[];
+  count: number;
+}
+
+export interface ConversationMessageResponse {
+  user_id: string;
+  session_id: string;
+  assistant_reply: string;
+  detected_input_language: string;
+  input_mode: "text" | "voice";
+  timestamp: string;
+}
+
+export interface TranscriptionResponse {
+  text: string;
+  detected_language: string;
+  language_confidence: number;
 }

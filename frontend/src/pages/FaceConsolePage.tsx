@@ -9,6 +9,7 @@ import {
 import { useCallback, useState } from "react";
 
 import { ApiError } from "../api/client";
+import { ChatPanel } from "../components/ChatPanel";
 import { UserList } from "../components/UserList";
 import { WebcamCapture } from "../components/WebcamCapture";
 import {
@@ -76,6 +77,10 @@ export function FaceConsolePage() {
     : null;
   const verificationFailed =
     identify.data?.outcome === "spoof_detected";
+  const recognizedUser =
+    identify.data?.outcome === "recognized" && identify.data.is_live
+      ? identify.data.user
+      : null;
 
   return (
     <main className="min-h-screen px-5 py-6 sm:px-8 lg:px-10">
@@ -96,7 +101,7 @@ export function FaceConsolePage() {
           </div>
           <span className="hidden items-center gap-2 rounded-full border border-ink/10 bg-white/60 px-4 py-2 text-xs font-medium text-ink/60 sm:flex">
             <ShieldCheck className="h-4 w-4 text-fern" />
-            Phase 2 · Local processing
+            Phase 3 · AI conversation
           </span>
         </header>
 
@@ -275,6 +280,12 @@ export function FaceConsolePage() {
             loading={users.isLoading}
           />
         </section>
+        <div className="pb-12">
+          <ChatPanel
+            user={recognizedUser}
+            detectedEmotion={identify.data?.detected_emotion ?? null}
+          />
+        </div>
       </div>
     </main>
   );
