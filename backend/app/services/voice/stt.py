@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import tempfile
 import threading
 from dataclasses import dataclass
@@ -10,6 +11,9 @@ from app.core.config import settings
 
 if TYPE_CHECKING:
     from faster_whisper import WhisperModel
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 class AudioTranscriptionError(RuntimeError):
@@ -57,6 +61,22 @@ class SpeechToTextService:
                 temporary_file.write(audio_bytes)
                 temporary_path = Path(temporary_file.name)
 
+            duration_seconds = await asyncio.to_thread(
+                self._audio_duration_seconds,
+                temporary_path,
+            )
+            logger.info(
+                "Received audio for transcription: "
+                "size_bytes=%d duration_seconds=%s suffix=%s",
+                len(audio_bytes),
+                (
+                    f"{duration_seconds:.3f}"
+                    if duration_seconds is not None
+                    else "unknown"
+                ),
+                suffix,
+            )
+
             return await asyncio.to_thread(
                 self._transcribe_file,
                 temporary_path,
@@ -70,6 +90,40 @@ class SpeechToTextService:
         finally:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _audio_duration_seconds(audio_path: Path) -> float | None:
+        try:
+            import av
+
+            with av.open(str(audio_path)) as container:
+                if container.duration is not None:
+                    return max(0.0, float(container.duration) / 1_000_000)
+
+                audio_stream = next(iter(container.streams.audio), None)
+                if (
+                    audio_stream is not None
+                    and audio_stream.duration is not None
+                    and audio_stream.time_base is not None
+                ):
+                    return max(
+                        0.0,
+                        float(audio_stream.duration * audio_stream.time_base),
+                    )
+
+                decoded_duration = sum(
+                    frame.samples / frame.sample_rate
+                    for frame in container.decode(audio=0)
+                    if frame.sample_rate
+                )
+                return decoded_duration or None
+        except Exception:
+            logger.warning(
+                "Could not determine uploaded audio duration: path=%s",
+                audio_path,
+                exc_info=True,
+            )
+            return None
 
     def _transcribe_file(self, audio_path: Path) -> TranscriptionResult:
         with self._inference_lock:

@@ -121,7 +121,7 @@ async def read_user_history(
     await _get_verified_context(db, user_id)
 
     try:
-        user, messages = await get_user_history(db, user_id)
+        user, messages = await get_user_history(db, user_id=user_id)
     except ConversationUserNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -1,4 +1,5 @@
 from pathlib import Path
+import logging
 
 from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
 
@@ -12,6 +13,7 @@ from app.services.voice import (
 )
 
 router = APIRouter(prefix="/voice", tags=["voice"])
+logger = logging.getLogger("uvicorn.error")
 
 AUDIO_SUFFIX_BY_CONTENT_TYPE = {
     "audio/mp4": ".m4a",
@@ -61,6 +63,11 @@ async def _read_audio(audio: UploadFile) -> tuple[bytes, str]:
 async def transcribe_audio(
     audio: UploadFile = File(...),
 ) -> TranscriptionResponse:
+    logger.info(
+        "Voice upload accepted: field=audio filename=%s content_type=%s",
+        audio.filename,
+        audio.content_type,
+    )
     audio_bytes, suffix = await _read_audio(audio)
     try:
         result = await get_stt_service().transcribe(
@@ -68,6 +75,11 @@ async def transcribe_audio(
             suffix=suffix,
         )
     except AudioTranscriptionError as exc:
+        logger.warning(
+            "Voice upload passed multipart validation but transcription failed: "
+            "detail=%s",
+            exc,
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),

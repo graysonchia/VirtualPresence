@@ -23,10 +23,12 @@ import {
   useTranscribeAudio,
 } from "../hooks/useVoiceApi";
 import type { EnrolledUser } from "../types";
+import type { ConversationAnimationState } from "./Avatar";
 
 interface ChatPanelProps {
   user: EnrolledUser | null;
   detectedEmotion: string | null;
+  onConversationStateChange?: (state: ConversationAnimationState) => void;
 }
 
 interface MessageInput {
@@ -38,19 +40,29 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.message : fallback;
 }
 
-export function ChatPanel({ user, detectedEmotion }: ChatPanelProps) {
+export function ChatPanel({
+  user,
+  detectedEmotion,
+  onConversationStateChange,
+}: ChatPanelProps) {
   const [message, setMessage] = useState("");
   const [isRecording, setIsRecording] = useState(false);
+  const [isStartingRecording, setIsStartingRecording] = useState(false);
+  const [isAvatarSpeaking, setIsAvatarSpeaking] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const scrollAnchor = useRef<HTMLDivElement>(null);
-  const recorder = useRef<MediaRecorder | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const microphoneStream = useRef<MediaStream | null>(null);
   const recordingChunks = useRef<Blob[]>([]);
   const recordingTimer = useRef<number | null>(null);
+  const avatarSpeakingTimer = useRef<number | null>(null);
+  const recordingStartAttempt = useRef(0);
+  const recordingStarting = useRef(false);
   const audioPlayer = useRef<HTMLAudioElement | null>(null);
   const audioUrl = useRef<string | null>(null);
   const mutedRef = useRef(isMuted);
+  const mountedRef = useRef(false);
 
   const history = useConversationHistory(user?.id ?? null);
   const sendMessage = useSendConversationMessage(user?.id ?? null);
@@ -75,25 +87,95 @@ export function ChatPanel({ user, detectedEmotion }: ChatPanelProps) {
     microphoneStream.current = null;
   }, []);
 
+  const stopAndReleaseRecorder = useCallback(() => {
+    if (mediaRecorderRef.current) {
+      const activeRecorder = mediaRecorderRef.current;
+      activeRecorder.ondataavailable = null;
+      activeRecorder.onstop = null;
+      mediaRecorderRef.current = null;
+
+      if (activeRecorder.state !== "inactive") {
+        try {
+          activeRecorder.stop();
+        } catch {
+          // The recorder may have become inactive during browser teardown.
+        }
+      }
+    }
+  }, []);
+
+  const cancelRecordingSession = useCallback(() => {
+    recordingStartAttempt.current += 1;
+    recordingStarting.current = false;
+    stopAndReleaseRecorder();
+    stopMicrophone();
+    recordingChunks.current = [];
+  }, [stopAndReleaseRecorder, stopMicrophone]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   useEffect(() => {
     scrollAnchor.current?.scrollIntoView({ behavior: "smooth" });
   }, [history.data?.count, sendMessage.isPending]);
 
   useEffect(() => {
-    if (recorder.current?.state === "recording") {
-      recorder.current.ondataavailable = null;
-      recorder.current.onstop = null;
-      recorder.current.stop();
-      setIsRecording(false);
+    if (avatarSpeakingTimer.current !== null) {
+      window.clearTimeout(avatarSpeakingTimer.current);
+      avatarSpeakingTimer.current = null;
     }
-    stopMicrophone();
+
+    const reply = sendMessage.data?.assistant_reply;
+    if (!reply) {
+      setIsAvatarSpeaking(false);
+      return;
+    }
+
+    setIsAvatarSpeaking(true);
+    const speakingDuration = Math.min(
+      8_000,
+      Math.max(1_800, reply.length * 45),
+    );
+    avatarSpeakingTimer.current = window.setTimeout(() => {
+      setIsAvatarSpeaking(false);
+      avatarSpeakingTimer.current = null;
+    }, speakingDuration);
+
+    return () => {
+      if (avatarSpeakingTimer.current !== null) {
+        window.clearTimeout(avatarSpeakingTimer.current);
+        avatarSpeakingTimer.current = null;
+      }
+    };
+  }, [sendMessage.data?.assistant_reply]);
+
+  const avatarConversationState: ConversationAnimationState =
+    sendMessage.isPending
+      ? "thinking"
+      : isAvatarSpeaking
+        ? "speaking"
+        : "idle";
+
+  useEffect(() => {
+    onConversationStateChange?.(avatarConversationState);
+  }, [avatarConversationState, onConversationStateChange]);
+
+  useEffect(() => {
+    cancelRecordingSession();
+    setIsRecording(false);
+    setIsStartingRecording(false);
+    setIsAvatarSpeaking(false);
     releaseAudio();
     setMessage("");
     setVoiceError(null);
     sendMessage.reset();
     transcribe.reset();
     synthesize.reset();
-  }, [user?.id, releaseAudio, stopMicrophone]);
+  }, [user?.id, cancelRecordingSession, releaseAudio]);
 
   useEffect(() => {
     mutedRef.current = isMuted;
@@ -102,15 +184,14 @@ export function ChatPanel({ user, detectedEmotion }: ChatPanelProps) {
 
   useEffect(
     () => () => {
-      if (recorder.current?.state !== "inactive") {
-        recorder.current!.ondataavailable = null;
-        recorder.current!.onstop = null;
-        recorder.current!.stop();
+      cancelRecordingSession();
+      if (avatarSpeakingTimer.current !== null) {
+        window.clearTimeout(avatarSpeakingTimer.current);
+        avatarSpeakingTimer.current = null;
       }
-      stopMicrophone();
       releaseAudio();
     },
-    [releaseAudio, stopMicrophone],
+    [cancelRecordingSession, releaseAudio],
   );
 
   const playReply = useCallback(
@@ -164,27 +245,49 @@ export function ChatPanel({ user, detectedEmotion }: ChatPanelProps) {
   };
 
   const stopRecording = useCallback(() => {
-    if (recorder.current?.state === "recording") {
-      recorder.current.stop();
+    if (mediaRecorderRef.current) {
+      const activeRecorder = mediaRecorderRef.current;
+      if (activeRecorder.state === "recording") {
+        activeRecorder.stop();
+      }
     }
   }, []);
 
   const startRecording = async () => {
+    if (recordingStarting.current || mediaRecorderRef.current) return;
+
+    recordingStarting.current = true;
+    setIsStartingRecording(true);
     setVoiceError(null);
     transcribe.reset();
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      recordingStarting.current = false;
+      setIsStartingRecording(false);
       setVoiceError("This browser does not support microphone recording.");
       return;
     }
 
+    const attempt = ++recordingStartAttempt.current;
+    let acquiredStream: MediaStream | null = null;
+    let mediaRecorder: MediaRecorder | null = null;
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      acquiredStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
         },
       });
-      microphoneStream.current = stream;
+
+      if (
+        !mountedRef.current ||
+        attempt !== recordingStartAttempt.current
+      ) {
+        acquiredStream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
+      microphoneStream.current = acquiredStream;
       recordingChunks.current = [];
 
       const preferredType = [
@@ -192,40 +295,82 @@ export function ChatPanel({ user, detectedEmotion }: ChatPanelProps) {
         "audio/webm",
         "audio/ogg;codecs=opus",
       ].find((type) => MediaRecorder.isTypeSupported(type));
-      const mediaRecorder = new MediaRecorder(
-        stream,
+      const activeMediaRecorder = new MediaRecorder(
+        acquiredStream,
         preferredType ? { mimeType: preferredType } : undefined,
       );
-      recorder.current = mediaRecorder;
+      mediaRecorder = activeMediaRecorder;
+      mediaRecorderRef.current = activeMediaRecorder;
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) recordingChunks.current.push(event.data);
-      };
-      mediaRecorder.onstop = () => {
-        setIsRecording(false);
-        stopMicrophone();
-        const audio = new Blob(recordingChunks.current, {
-          type: mediaRecorder.mimeType || "audio/webm",
-        });
-        if (!audio.size) {
-          setVoiceError("No audio was recorded. Please try again.");
-          return;
-        }
-        transcribe.mutate(audio, {
-          onSuccess: (result) => {
-            sendContent({ audioTranscriptOf: result.text });
-          },
-        });
-      };
+      if (mediaRecorderRef.current) {
+        mediaRecorderRef.current.ondataavailable = (event) => {
+          console.debug("[voice] MediaRecorder data available", {
+            sizeBytes: event.data.size,
+            type: event.data.type,
+          });
+          if (event.data.size > 0) recordingChunks.current.push(event.data);
+        };
+        mediaRecorderRef.current.onstop = () => {
+          if (mediaRecorderRef.current === activeMediaRecorder) {
+            mediaRecorderRef.current = null;
+          }
 
-      mediaRecorder.start(250);
+          const chunks = recordingChunks.current;
+          recordingChunks.current = [];
+          stopMicrophone();
+
+          if (
+            !mountedRef.current ||
+            attempt !== recordingStartAttempt.current
+          ) {
+            return;
+          }
+
+          setIsRecording(false);
+          const audio = new Blob(chunks, {
+            type: activeMediaRecorder.mimeType || "audio/webm",
+          });
+          console.log("[voice] Recorded audio blob ready for upload", {
+            blobSizeBytes: audio.size,
+            chunkBytes: chunks.reduce((total, chunk) => total + chunk.size, 0),
+            chunkCount: chunks.length,
+            type: audio.type,
+          });
+          if (!audio.size) {
+            setVoiceError("No audio was recorded. Please try again.");
+            return;
+          }
+          transcribe.mutate(audio, {
+            onSuccess: (result) => {
+              sendContent({ audioTranscriptOf: result.text });
+            },
+          });
+        };
+      }
+
+      activeMediaRecorder.start(250);
       setIsRecording(true);
       recordingTimer.current = window.setTimeout(stopRecording, 60_000);
     } catch {
-      stopMicrophone();
-      setVoiceError(
-        "Microphone access was blocked. Allow permission and try again.",
-      );
+      if (mediaRecorderRef.current === mediaRecorder) {
+        stopAndReleaseRecorder();
+      }
+      if (microphoneStream.current === acquiredStream) {
+        stopMicrophone();
+      } else {
+        acquiredStream?.getTracks().forEach((track) => track.stop());
+      }
+      if (mountedRef.current && attempt === recordingStartAttempt.current) {
+        setIsRecording(false);
+        setVoiceError(
+          "Microphone access was blocked. Allow permission and try again.",
+        );
+      }
+    } finally {
+      if (attempt === recordingStartAttempt.current) {
+        recordingStarting.current = false;
+        if (mountedRef.current) setIsStartingRecording(false);
+      }
     }
   };
 
@@ -415,6 +560,7 @@ export function ChatPanel({ user, detectedEmotion }: ChatPanelProps) {
               isRecording ? stopRecording : () => void startRecording()
             }
             disabled={
+              isStartingRecording ||
               (!isRecording && (transcribe.isPending || sendMessage.isPending))
             }
             className={`grid h-11 w-11 shrink-0 place-items-center rounded-2xl transition disabled:cursor-not-allowed disabled:opacity-35 ${
@@ -422,10 +568,24 @@ export function ChatPanel({ user, detectedEmotion }: ChatPanelProps) {
                 ? "animate-pulse bg-coral text-white"
                 : "bg-fern/10 text-fern hover:bg-fern/20"
             }`}
-            aria-label={isRecording ? "Stop recording" : "Record voice message"}
-            title={isRecording ? "Stop recording" : "Record voice message"}
+            aria-label={
+              isStartingRecording
+                ? "Starting microphone"
+                : isRecording
+                  ? "Stop recording"
+                  : "Record voice message"
+            }
+            title={
+              isStartingRecording
+                ? "Starting microphone"
+                : isRecording
+                  ? "Stop recording"
+                  : "Record voice message"
+            }
           >
-            {isRecording ? (
+            {isStartingRecording ? (
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+            ) : isRecording ? (
               <Square className="h-4 w-4 fill-current" />
             ) : (
               <Mic className="h-4 w-4" />

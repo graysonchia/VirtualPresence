@@ -6,10 +6,12 @@ import {
   Sparkles,
   XCircle,
 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { lazy, Suspense, useCallback, useState } from "react";
 
 import { ApiError } from "../api/client";
+import type { ConversationAnimationState } from "../components/Avatar";
 import { ChatPanel } from "../components/ChatPanel";
+import { ChatPanelErrorBoundary } from "../components/ChatPanelErrorBoundary";
 import { UserList } from "../components/UserList";
 import { WebcamCapture } from "../components/WebcamCapture";
 import {
@@ -20,6 +22,12 @@ import {
 
 type Mode = "identify" | "enroll";
 
+const AvatarPanel = lazy(() =>
+  import("../components/Avatar/AvatarPanel").then((module) => ({
+    default: module.AvatarPanel,
+  })),
+);
+
 function errorMessage(error: unknown): string {
   return error instanceof ApiError ? error.message : "Something went wrong.";
 }
@@ -29,6 +37,8 @@ export function FaceConsolePage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [language, setLanguage] = useState("en");
+  const [conversationAnimation, setConversationAnimation] =
+    useState<ConversationAnimationState>("idle");
   const enroll = useEnrollFace();
   const identify = useIdentifyFace();
   const users = useEnrolledUsers();
@@ -281,10 +291,38 @@ export function FaceConsolePage() {
           />
         </section>
         <div className="pb-12">
-          <ChatPanel
-            user={recognizedUser}
-            detectedEmotion={identify.data?.detected_emotion ?? null}
-          />
+          {recognizedUser ? (
+            <div className="grid items-stretch gap-7 lg:grid-cols-[minmax(320px,0.72fr)_minmax(0,1.28fr)]">
+              <Suspense
+                fallback={
+                  <div className="grid min-h-[440px] place-items-center rounded-[2.5rem] bg-ink text-sm text-white/55 shadow-panel lg:min-h-[590px]">
+                    Preparing virtual presence…
+                  </div>
+                }
+              >
+                <AvatarPanel
+                  userName={recognizedUser.name}
+                  emotion={identify.data?.detected_emotion ?? null}
+                  conversationState={conversationAnimation}
+                />
+              </Suspense>
+              <ChatPanelErrorBoundary key={recognizedUser.id}>
+                <ChatPanel
+                  user={recognizedUser}
+                  detectedEmotion={identify.data?.detected_emotion ?? null}
+                  onConversationStateChange={setConversationAnimation}
+                />
+              </ChatPanelErrorBoundary>
+            </div>
+          ) : (
+            <ChatPanelErrorBoundary key="locked">
+              <ChatPanel
+                user={null}
+                detectedEmotion={identify.data?.detected_emotion ?? null}
+                onConversationStateChange={setConversationAnimation}
+              />
+            </ChatPanelErrorBoundary>
+          )}
         </div>
       </div>
     </main>
