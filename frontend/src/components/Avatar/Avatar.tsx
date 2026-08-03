@@ -21,7 +21,16 @@ const HAIR = "#172822";
 const SHIRT = "#2b8062";
 const EYE = "#f8fff8";
 const IRIS = "#234c40";
+const PUPIL = "#10241f";
 const MOUTH = "#6e2d32";
+const MOUTH_LIGHT = "#9a4a51";
+const EYE_OFFSETS = [-1, 1] as const;
+const MOUTH_SEGMENT_COUNT = 17;
+const MOUTH_SEGMENT_INDICES = Array.from(
+  { length: MOUTH_SEGMENT_COUNT },
+  (_, index) => index,
+);
+const MOUTH_INNER_SEGMENT_INDICES = MOUTH_SEGMENT_INDICES.slice(1, -1);
 
 function dampExpression(
   current: AvatarExpression,
@@ -71,20 +80,24 @@ function dampExpression(
     smoothing,
     delta,
   );
+  current.mouthWidth = MathUtils.damp(
+    current.mouthWidth,
+    target.mouthWidth,
+    smoothing,
+    delta,
+  );
 }
 
 export function Avatar({ conversationState, emotion }: AvatarProps) {
   const bust = useRef<Group>(null);
   const head = useRef<Group>(null);
-  const leftEye = useRef<Group>(null);
-  const rightEye = useRef<Group>(null);
-  const leftPupil = useRef<Mesh>(null);
-  const rightPupil = useRef<Mesh>(null);
+  const eyes = useRef<Array<Group | null>>([]);
+  const pupils = useRef<Array<Mesh | null>>([]);
   const leftBrow = useRef<Mesh>(null);
   const rightBrow = useRef<Mesh>(null);
   const mouthOpening = useRef<Mesh>(null);
-  const mouthLeft = useRef<Mesh>(null);
-  const mouthRight = useRef<Mesh>(null);
+  const upperLip = useRef<Array<Mesh | null>>([]);
+  const lowerLip = useRef<Array<Mesh | null>>([]);
   const nextBlink = useRef(2.2);
   const expression = useRef<AvatarExpression>({
     ...expressionForEmotion(emotion),
@@ -110,8 +123,8 @@ export function Avatar({ conversationState, emotion }: AvatarProps) {
 
     const thinking = conversationState === "thinking";
     const speaking = conversationState === "speaking";
-    const idleSway = Math.sin(elapsed * 0.62) * 0.025;
-    const thinkingTilt = thinking ? Math.sin(elapsed * 1.15) * 0.035 + 0.07 : 0;
+    const idleSway = Math.sin(elapsed * 0.62) * 0.008;
+    const thinkingTilt = thinking ? Math.sin(elapsed * 1.15) * 0.025 + 0.045 : 0;
     const thinkingNod = thinking ? Math.sin(elapsed * 1.8) * 0.018 : 0;
 
     if (bust.current) {
@@ -126,21 +139,17 @@ export function Avatar({ conversationState, emotion }: AvatarProps) {
     }
 
     const eyeScale = Math.max(0.04, current.eyeOpenness * blink);
-    leftEye.current?.scale.set(1, eyeScale, 1);
-    rightEye.current?.scale.set(1, eyeScale, 1);
+    eyes.current.forEach((eye) => eye?.scale.set(1, eyeScale, 1));
 
     const gazeX = thinking
       ? Math.sin(elapsed * 1.9) * 0.035
       : Math.sin(elapsed * 0.42) * 0.012;
     const gazeY = thinking ? Math.cos(elapsed * 1.25) * 0.018 : 0;
-    if (leftPupil.current) {
-      leftPupil.current.position.x = gazeX;
-      leftPupil.current.position.y = gazeY;
-    }
-    if (rightPupil.current) {
-      rightPupil.current.position.x = gazeX;
-      rightPupil.current.position.y = gazeY;
-    }
+    pupils.current.forEach((pupil) => {
+      if (!pupil) return;
+      pupil.position.x = gazeX;
+      pupil.position.y = gazeY;
+    });
 
     const browY = 0.48 + current.browLift * 0.15;
     if (leftBrow.current) {
@@ -156,20 +165,50 @@ export function Avatar({ conversationState, emotion }: AvatarProps) {
       ? 0.16 + Math.abs(Math.sin(elapsed * 7.5)) * 0.36
       : 0;
     const openAmount = Math.max(current.mouthOpen, speechOpen);
+    const mouthHalfWidth = MathUtils.lerp(0.13, 0.23, current.mouthWidth);
+    const mouthOpenHeight = 0.006 + openAmount * 0.12;
+    const mouthCenterY = -0.4;
+    const mouthPoint = (index: number, lip: -1 | 1) => {
+      const u = (index / (MOUTH_SEGMENT_COUNT - 1)) * 2 - 1;
+      const x = u * mouthHalfWidth;
+      const curveY = current.mouthCurve * 0.072 * u * u;
+      const openingY =
+        lip * mouthOpenHeight * Math.sqrt(Math.max(0, 1 - u * u));
+      return { x, y: mouthCenterY + curveY + openingY };
+    };
+
     if (mouthOpening.current) {
-      mouthOpening.current.scale.y = 0.028 + openAmount * 0.12;
-      mouthOpening.current.scale.x = 0.15 - openAmount * 0.018;
+      mouthOpening.current.position.y = mouthCenterY;
+      mouthOpening.current.scale.y = mouthOpenHeight * 0.92;
+      mouthOpening.current.scale.x =
+        mouthHalfWidth * MathUtils.lerp(0.72, 0.92, openAmount);
     }
 
-    const mouthAngle = current.mouthCurve * 0.38;
-    if (mouthLeft.current) {
-      mouthLeft.current.rotation.z = -mouthAngle;
-      mouthLeft.current.position.y = -0.37 - current.mouthCurve * 0.022;
-    }
-    if (mouthRight.current) {
-      mouthRight.current.rotation.z = mouthAngle;
-      mouthRight.current.position.y = -0.37 - current.mouthCurve * 0.022;
-    }
+    const positionLip = (segments: Array<Mesh | null>, lip: -1 | 1) => {
+      segments.forEach((segment, index) => {
+        if (!segment) return;
+        const point = mouthPoint(index, lip);
+        const previous = mouthPoint(Math.max(0, index - 1), lip);
+        const next = mouthPoint(
+          Math.min(MOUTH_SEGMENT_COUNT - 1, index + 1),
+          lip,
+        );
+        segment.position.set(point.x, point.y, 1.026 + lip * 0.002);
+        segment.rotation.z = Math.atan2(
+          next.y - previous.y,
+          next.x - previous.x,
+        );
+        const segmentScale =
+          (((mouthHalfWidth * 2) / (MOUTH_SEGMENT_COUNT - 1)) / 0.04) *
+          1.6;
+        const isEndpoint =
+          index === 0 || index === MOUTH_SEGMENT_COUNT - 1;
+        segment.scale.x = segmentScale * (isEndpoint ? 0.55 : 1);
+      });
+    };
+
+    positionLip(upperLip.current, 1);
+    positionLip(lowerLip.current, -1);
   });
 
   return (
@@ -228,26 +267,47 @@ export function Avatar({ conversationState, emotion }: AvatarProps) {
             </mesh>
           ))}
 
-          <group ref={leftEye} position={[-0.39, 0.2, 0.84]}>
-            <mesh scale={[1, 0.64, 0.46]}>
-              <sphereGeometry args={[0.21, 24, 18]} />
-              <meshStandardMaterial color={EYE} roughness={0.38} />
-            </mesh>
-            <mesh ref={leftPupil} position={[0, 0, 0.095]}>
-              <sphereGeometry args={[0.082, 20, 14]} />
-              <meshStandardMaterial color={IRIS} roughness={0.4} />
-            </mesh>
-          </group>
-          <group ref={rightEye} position={[0.39, 0.2, 0.84]}>
-            <mesh scale={[1, 0.64, 0.46]}>
-              <sphereGeometry args={[0.21, 24, 18]} />
-              <meshStandardMaterial color={EYE} roughness={0.38} />
-            </mesh>
-            <mesh ref={rightPupil} position={[0, 0, 0.095]}>
-              <sphereGeometry args={[0.082, 20, 14]} />
-              <meshStandardMaterial color={IRIS} roughness={0.4} />
-            </mesh>
-          </group>
+          {EYE_OFFSETS.map((side, index) => (
+            <group
+              key={side}
+              ref={(eye) => {
+                eyes.current[index] = eye;
+              }}
+              position={[side * 0.39, 0.2, 0.84]}
+            >
+              <mesh scale={[1, 0.64, 0.46]}>
+                <sphereGeometry args={[0.21, 24, 18]} />
+                <meshStandardMaterial
+                  color={EYE}
+                  emissive="#e5f4e8"
+                  emissiveIntensity={0.08}
+                  roughness={0.3}
+                />
+              </mesh>
+              <mesh
+                ref={(pupil) => {
+                  pupils.current[index] = pupil;
+                }}
+                position={[0, 0, 0.095]}
+              >
+                <sphereGeometry args={[0.082, 20, 14]} />
+                <meshStandardMaterial color={IRIS} roughness={0.3} />
+                <mesh position={[0, 0, 0.073]}>
+                  <sphereGeometry args={[0.038, 16, 12]} />
+                  <meshStandardMaterial color={PUPIL} roughness={0.24} />
+                </mesh>
+                <mesh position={[-0.025, 0.03, 0.105]}>
+                  <sphereGeometry args={[0.014, 12, 10]} />
+                  <meshStandardMaterial
+                    color="#ffffff"
+                    emissive="#ffffff"
+                    emissiveIntensity={0.35}
+                    roughness={0.16}
+                  />
+                </mesh>
+              </mesh>
+            </group>
+          ))}
 
           <mesh
             ref={leftBrow}
@@ -274,27 +334,38 @@ export function Avatar({ conversationState, emotion }: AvatarProps) {
           <mesh
             ref={mouthOpening}
             position={[0, -0.41, 1.005]}
-            scale={[0.15, 0.028, 0.035]}
+            scale={[0.15, 0.02, 0.035]}
           >
             <sphereGeometry args={[1, 24, 18]} />
-            <meshStandardMaterial color="#3c1720" roughness={0.7} />
+            <meshStandardMaterial color="#35131c" roughness={0.56} />
           </mesh>
-          <mesh
-            ref={mouthLeft}
-            position={[-0.09, -0.37, 1.025]}
-            rotation={[0, 0, -0.03]}
-          >
-            <boxGeometry args={[0.19, 0.042, 0.03]} />
-            <meshStandardMaterial color={MOUTH} roughness={0.68} />
-          </mesh>
-          <mesh
-            ref={mouthRight}
-            position={[0.09, -0.37, 1.025]}
-            rotation={[0, 0, 0.03]}
-          >
-            <boxGeometry args={[0.19, 0.042, 0.03]} />
-            <meshStandardMaterial color={MOUTH} roughness={0.68} />
-          </mesh>
+          {MOUTH_SEGMENT_INDICES.map((index) => (
+            <mesh
+              key={`upper-${index}`}
+              ref={(segment) => {
+                upperLip.current[index] = segment;
+              }}
+              scale={[1, 0.4, 0.42]}
+            >
+              <sphereGeometry args={[0.04, 14, 10]} />
+              <meshStandardMaterial
+                color={MOUTH_LIGHT}
+                roughness={0.46}
+              />
+            </mesh>
+          ))}
+          {MOUTH_INNER_SEGMENT_INDICES.map((index) => (
+            <mesh
+              key={`lower-${index}`}
+              ref={(segment) => {
+                lowerLip.current[index] = segment;
+              }}
+              scale={[1, 0.4, 0.42]}
+            >
+              <sphereGeometry args={[0.04, 14, 10]} />
+              <meshStandardMaterial color={MOUTH} roughness={0.56} />
+            </mesh>
+          ))}
         </group>
       </group>
 

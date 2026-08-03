@@ -11,6 +11,10 @@ from app.models.interaction_session import InteractionSession
 from app.models.user import User
 from app.services.conversation.language import detect_language
 from app.services.conversation.llm_client import LLMClient
+from app.services.conversation.memory import (
+    get_relevant_memory_facts,
+    remember_message_facts,
+)
 
 
 class ConversationUserNotFoundError(LookupError):
@@ -54,6 +58,11 @@ async def send_message(
     )
     session_history = await _session_history(db, session.id)
     history = await _user_message_history(db, user.id)
+    relevant_facts = await get_relevant_memory_facts(
+        db,
+        user_id=user.id,
+        message_text=message_text,
+    )
     language = detect_language(message_text, fallback=user.preferred_language)
     user_message = ConversationMessage(
         id=str(uuid4()),
@@ -79,6 +88,7 @@ async def send_message(
             is_live=is_live,
             messages=llm_messages,
             should_greet=should_greet,
+            memory_facts=[fact.fact_text for fact in relevant_facts],
         )
         assistant_message = ConversationMessage(
             id=str(uuid4()),
@@ -87,6 +97,11 @@ async def send_message(
             content=reply_text,
         )
         db.add(assistant_message)
+        await remember_message_facts(
+            db,
+            user_id=user.id,
+            message_text=user_message.content,
+        )
         await db.commit()
         await db.refresh(assistant_message)
     except Exception:

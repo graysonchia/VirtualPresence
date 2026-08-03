@@ -12,11 +12,17 @@ if TYPE_CHECKING:
     from app.models.face_embedding import FaceEmbedding
     from app.models.interaction_session import InteractionSession
     from app.models.recognition_event import RecognitionEvent
+    from app.models.user_memory_fact import UserMemoryFact
 
 
 class UserStatus(str, enum.Enum):
     ACTIVE = "active"
     INACTIVE = "inactive"
+
+
+class VoiceGender(str, enum.Enum):
+    MALE = "male"
+    FEMALE = "female"
 
 
 class User(UUIDPrimaryKeyMixin, Base):
@@ -31,6 +37,16 @@ class User(UUIDPrimaryKeyMixin, Base):
     )
     preferred_language: Mapped[str] = mapped_column(
         String(10), default="en", nullable=False
+    )
+    preferred_voice_gender: Mapped[VoiceGender] = mapped_column(
+        Enum(
+            VoiceGender,
+            name="voice_gender",
+            native_enum=True,
+            values_callable=lambda enum_cls: [item.value for item in enum_cls],
+        ),
+        default=VoiceGender.MALE,
+        nullable=False,
     )
     status: Mapped[UserStatus] = mapped_column(
         Enum(
@@ -51,4 +67,7 @@ class User(UUIDPrimaryKeyMixin, Base):
     )
     recognition_events: Mapped[list["RecognitionEvent"]] = relationship(
         back_populates="user"
+    )
+    memory_facts: Mapped[list["UserMemoryFact"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
     )

@@ -226,6 +226,7 @@ export function ChatPanel({
             {
               text: reply.assistant_reply,
               language: reply.detected_input_language,
+              user_id: user.id,
             },
             {
               onSuccess: (audio) => void playReply(audio),

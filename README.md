@@ -236,8 +236,11 @@ over HTTPS for `getUserMedia`.
 | `GET` | `/face/users` | Lists enrolled users |
 | `POST` | `/conversation/message` | JSON `{ "user_id", "message" }`; returns the assistant reply and detected input language |
 | `GET` | `/conversation/users/{user_id}/history` | Full persisted message history for a recently verified user |
+| `GET` | `/memory/users/{user_id}/facts` | Lists the durable personal facts remembered for a user |
+| `DELETE` | `/memory/users/{user_id}/facts/{fact_id}` | Permanently removes one remembered fact |
+| `PATCH` | `/users/{user_id}/settings` | Updates user settings such as `{ "preferred_voice_gender": "female" }` |
 | `POST` | `/voice/transcribe` | Multipart `audio`; returns transcript, detected language, and language confidence |
-| `POST` | `/voice/synthesize` | JSON `{ "text", "language" }`; returns inline MP3 audio |
+| `POST` | `/voice/synthesize` | JSON `{ "text", "language", "user_id" }` (`user_id` optional); returns inline MP3 audio using the user's preferred voice or the male default |
 | `GET` | `/health` | API health check |
 
 PowerShell example with an existing image:
@@ -263,6 +266,13 @@ no-face, unmatched, and suspected spoof results. Stored analysis includes
 `liveness_confidence`. When liveness fails, the API returns
 `outcome: "spoof_detected"` and may still include the candidate user, but the
 frontend clearly labels that identity as unverified.
+
+Conversation messages are also checked for durable facts such as ongoing
+projects, preferences, goals, and stable profile details. Relevant facts are
+included as untrusted context for later replies and can be reviewed or deleted
+through the memory API. Short-lived states such as being tired or upset are not
+stored. New users default to a male synthesized voice; `male` and `female`
+preferences can be selected through the user settings endpoint.
 
 ## Anthropic conversation setup
 

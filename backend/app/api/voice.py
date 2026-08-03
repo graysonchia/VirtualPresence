@@ -1,9 +1,20 @@
 from pathlib import Path
 import logging
 
-from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Response,
+    UploadFile,
+    status,
+)
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.database import get_db
+from app.models.user import User, VoiceGender
 from app.schemas.voice import SynthesisRequest, TranscriptionResponse
 from app.services.voice import (
     AudioTranscriptionError,
@@ -34,8 +45,7 @@ async def _read_audio(audio: UploadFile) -> tuple[bytes, str]:
     if content_type in AUDIO_SUFFIX_BY_CONTENT_TYPE:
         audio_suffix = AUDIO_SUFFIX_BY_CONTENT_TYPE[content_type]
     elif (
-        content_type == "application/octet-stream"
-        and suffix in ALLOWED_AUDIO_SUFFIXES
+        content_type == "application/octet-stream" and suffix in ALLOWED_AUDIO_SUFFIXES
     ):
         audio_suffix = suffix
     else:
@@ -97,21 +107,34 @@ async def transcribe_audio(
     response_class=Response,
     responses={200: {"content": {"audio/mpeg": {}}}},
 )
-async def synthesize_speech(payload: SynthesisRequest) -> Response:
+async def synthesize_speech(
+    payload: SynthesisRequest,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
     if len(payload.text) > settings.tts_max_text_characters:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=(
-                "Text must be at most "
-                f"{settings.tts_max_text_characters} characters."
+                f"Text must be at most {settings.tts_max_text_characters} characters."
             ),
         )
+
+    voice_gender = VoiceGender.MALE
+    if payload.user_id is not None:
+        user = await db.get(User, payload.user_id)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found.",
+            )
+        voice_gender = user.preferred_voice_gender
 
     tts_service = get_tts_service()
     try:
         audio = await tts_service.synthesize(
             payload.text,
             language=payload.language,
+            gender=voice_gender,
         )
     except SpeechSynthesisError as exc:
         raise HTTPException(
@@ -124,6 +147,9 @@ async def synthesize_speech(payload: SynthesisRequest) -> Response:
         media_type="audio/mpeg",
         headers={
             "Content-Disposition": 'inline; filename="virtualpresence-reply.mp3"',
-            "X-Voice": tts_service.voice_for_language(payload.language),
+            "X-Voice": tts_service.voice_for_language(
+                payload.language,
+                voice_gender,
+            ),
         },
     )

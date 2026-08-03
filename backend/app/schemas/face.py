@@ -3,7 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.recognition_event import RecognitionOutcome
-from app.models.user import UserStatus
+from app.models.user import UserStatus, VoiceGender
 
 
 class EnrolledUser(BaseModel):
@@ -14,6 +14,7 @@ class EnrolledUser(BaseModel):
     email: str
     enrolled_at: datetime
     preferred_language: str
+    preferred_voice_gender: VoiceGender
     status: UserStatus
 
 

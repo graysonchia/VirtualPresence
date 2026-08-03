@@ -37,8 +37,10 @@ class Settings(BaseSettings):
     stt_compute_type: str = "int8"
     stt_beam_size: int = 3
     max_audio_upload_bytes: int = 25 * 1024 * 1024
-    tts_default_voice: str = "en-US-AriaNeural"
-    tts_mandarin_voice: str = "zh-CN-XiaoxiaoNeural"
+    tts_english_male_voice: str = "en-US-GuyNeural"
+    tts_english_female_voice: str = "en-US-JennyNeural"
+    tts_mandarin_male_voice: str = "zh-CN-YunxiNeural"
+    tts_mandarin_female_voice: str = "zh-CN-XiaoxiaoNeural"
     tts_max_text_characters: int = 5000
 
     face_match_threshold: float = 0.363

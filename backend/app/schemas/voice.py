@@ -10,6 +10,7 @@ class TranscriptionResponse(BaseModel):
 class SynthesisRequest(BaseModel):
     text: str = Field(min_length=1)
     language: str = Field(default="en", min_length=2, max_length=16)
+    user_id: str | None = Field(default=None, min_length=1, max_length=36)
 
     @field_validator("text")
     @classmethod

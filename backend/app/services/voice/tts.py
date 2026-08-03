@@ -3,22 +3,46 @@ from functools import lru_cache
 import edge_tts
 
 from app.core.config import settings
+from app.models.user import VoiceGender
 
 
 class SpeechSynthesisError(RuntimeError):
     pass
 
 
-LANGUAGE_VOICES = {
-    "de": "de-DE-KatjaNeural",
-    "es": "es-ES-ElviraNeural",
-    "fr": "fr-FR-DeniseNeural",
-    "id": "id-ID-GadisNeural",
-    "ja": "ja-JP-NanamiNeural",
-    "ko": "ko-KR-SunHiNeural",
-    "ms": "ms-MY-YasminNeural",
-    "pt": "pt-BR-FranciscaNeural",
-    "zh": "zh-CN-XiaoxiaoNeural",
+LANGUAGE_VOICES: dict[str, dict[VoiceGender, str]] = {
+    "de": {
+        VoiceGender.MALE: "de-DE-ConradNeural",
+        VoiceGender.FEMALE: "de-DE-KatjaNeural",
+    },
+    "es": {
+        VoiceGender.MALE: "es-ES-AlvaroNeural",
+        VoiceGender.FEMALE: "es-ES-ElviraNeural",
+    },
+    "fr": {
+        VoiceGender.MALE: "fr-FR-HenriNeural",
+        VoiceGender.FEMALE: "fr-FR-DeniseNeural",
+    },
+    "id": {
+        VoiceGender.MALE: "id-ID-ArdiNeural",
+        VoiceGender.FEMALE: "id-ID-GadisNeural",
+    },
+    "ja": {
+        VoiceGender.MALE: "ja-JP-KeitaNeural",
+        VoiceGender.FEMALE: "ja-JP-NanamiNeural",
+    },
+    "ko": {
+        VoiceGender.MALE: "ko-KR-InJoonNeural",
+        VoiceGender.FEMALE: "ko-KR-SunHiNeural",
+    },
+    "ms": {
+        VoiceGender.MALE: "ms-MY-OsmanNeural",
+        VoiceGender.FEMALE: "ms-MY-YasminNeural",
+    },
+    "pt": {
+        VoiceGender.MALE: "pt-BR-AntonioNeural",
+        VoiceGender.FEMALE: "pt-BR-FranciscaNeural",
+    },
 }
 
 
@@ -26,21 +50,45 @@ class TextToSpeechService:
     def __init__(
         self,
         *,
-        default_voice: str = settings.tts_default_voice,
-        mandarin_voice: str = settings.tts_mandarin_voice,
+        english_male_voice: str = settings.tts_english_male_voice,
+        english_female_voice: str = settings.tts_english_female_voice,
+        mandarin_male_voice: str = settings.tts_mandarin_male_voice,
+        mandarin_female_voice: str = settings.tts_mandarin_female_voice,
+        default_voice: str | None = None,
+        mandarin_voice: str | None = None,
     ) -> None:
-        self.default_voice = default_voice
-        self.mandarin_voice = mandarin_voice
+        # Keep the phase-3 constructor names as aliases for callers that
+        # customized the former single (female) voice configuration.
+        english_male_voice = default_voice or english_male_voice
+        mandarin_male_voice = mandarin_voice or mandarin_male_voice
+        self.voices = {
+            **LANGUAGE_VOICES,
+            "en": {
+                VoiceGender.MALE: english_male_voice,
+                VoiceGender.FEMALE: english_female_voice,
+            },
+            "zh": {
+                VoiceGender.MALE: mandarin_male_voice,
+                VoiceGender.FEMALE: mandarin_female_voice,
+            },
+        }
 
-    def voice_for_language(self, language: str) -> str:
+    def voice_for_language(
+        self,
+        language: str,
+        gender: VoiceGender = VoiceGender.MALE,
+    ) -> str:
         normalized = language.strip().lower().split("-", maxsplit=1)[0]
-        if normalized == "zh":
-            return self.mandarin_voice
-        if normalized == "en":
-            return self.default_voice
-        return LANGUAGE_VOICES.get(normalized, self.default_voice)
+        language_voices = self.voices.get(normalized, self.voices["en"])
+        return language_voices[gender]
 
-    async def synthesize(self, text: str, *, language: str) -> bytes:
+    async def synthesize(
+        self,
+        text: str,
+        *,
+        language: str,
+        gender: VoiceGender = VoiceGender.MALE,
+    ) -> bytes:
         normalized_text = text.strip()
         if not normalized_text:
             raise SpeechSynthesisError("Text is required for speech synthesis.")
@@ -48,7 +96,7 @@ class TextToSpeechService:
         try:
             communicator = edge_tts.Communicate(
                 normalized_text,
-                self.voice_for_language(language),
+                self.voice_for_language(language, gender),
             )
             chunks = [
                 message["data"]
@@ -61,9 +109,7 @@ class TextToSpeechService:
             ) from exc
 
         if not chunks:
-            raise SpeechSynthesisError(
-                "The speech service returned no audio."
-            )
+            raise SpeechSynthesisError("The speech service returned no audio.")
         return b"".join(chunks)
 
 

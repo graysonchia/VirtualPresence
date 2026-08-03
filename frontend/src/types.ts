@@ -1,4 +1,5 @@
 export type UserStatus = "active" | "inactive";
+export type VoiceGender = "male" | "female";
 export type RecognitionOutcome =
   | "recognized"
   | "unrecognized"
@@ -10,6 +11,7 @@ export interface EnrolledUser {
   email: string;
   enrolled_at: string;
   preferred_language: string;
+  preferred_voice_gender: VoiceGender;
   status: UserStatus;
 }
 

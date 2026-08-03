@@ -14,6 +14,7 @@ export function transcribeAudio(audio: Blob): Promise<TranscriptionResponse> {
 export function synthesizeSpeech(input: {
   text: string;
   language: string;
+  user_id: string;
 }): Promise<Blob> {
   return requestBlob("/voice/synthesize", {
     method: "POST",
