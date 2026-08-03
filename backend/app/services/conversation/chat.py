@@ -1,8 +1,9 @@
+import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -15,6 +16,9 @@ from app.services.conversation.memory import (
     get_relevant_memory_facts,
     remember_message_facts,
 )
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 class ConversationUserNotFoundError(LookupError):
@@ -63,6 +67,22 @@ async def send_message(
         user_id=user.id,
         message_text=message_text,
     )
+    memory_fact_texts = [fact.fact_text for fact in relevant_facts]
+    logger.info(
+        "[conversation] memory context user_id=%s message=%r fact_count=%d "
+        "facts=%r",
+        user.id,
+        message_text,
+        len(memory_fact_texts),
+        [
+            {
+                "id": fact.id,
+                "category": fact.category,
+                "fact_text": fact.fact_text,
+            }
+            for fact in relevant_facts
+        ],
+    )
     language = detect_language(message_text, fallback=user.preferred_language)
     user_message = ConversationMessage(
         id=str(uuid4()),
@@ -88,7 +108,7 @@ async def send_message(
             is_live=is_live,
             messages=llm_messages,
             should_greet=should_greet,
-            memory_facts=[fact.fact_text for fact in relevant_facts],
+            memory_facts=memory_fact_texts,
         )
         assistant_message = ConversationMessage(
             id=str(uuid4()),
@@ -102,6 +122,8 @@ async def send_message(
             user_id=user.id,
             message_text=user_message.content,
         )
+        session.message_count += 2
+        session.last_activity_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(assistant_message)
     except Exception:
@@ -119,11 +141,44 @@ async def get_user_history(
     db: AsyncSession,
     *,
     user_id: str,
+    current_session_only: bool = False,
 ) -> tuple[User, list[ConversationMessage]]:
     user = await db.get(User, user_id)
     if user is None:
         raise ConversationUserNotFoundError("User not found.")
+    if current_session_only:
+        return user, await _active_session_history(db, user_id)
     return user, await _user_message_history(db, user_id)
+
+
+async def start_new_conversation(
+    db: AsyncSession,
+    *,
+    user_id: str,
+) -> int:
+    user = await db.get(User, user_id)
+    if user is None:
+        raise ConversationUserNotFoundError("User not found.")
+
+    try:
+        result = await db.execute(
+            update(InteractionSession)
+            .where(
+                InteractionSession.user_id == user_id,
+                InteractionSession.ended_at.is_(None),
+            )
+            .values(
+                ended_at=func.coalesce(
+                    InteractionSession.last_activity_at,
+                    InteractionSession.started_at,
+                )
+            )
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    return result.rowcount or 0
 
 
 async def _get_or_create_session(
@@ -143,15 +198,24 @@ async def _get_or_create_session(
         .limit(1)
     )
     session = result.scalar_one_or_none()
-    if session is not None and session.started_at < recognized_at:
-        session.ended_at = datetime.now(timezone.utc)
-        session = None
+    if session is not None:
+        last_activity = session.last_activity_at or session.started_at
+        inactive = datetime.now(timezone.utc) - last_activity > timedelta(
+            seconds=settings.conversation_session_inactivity_seconds
+        )
+        new_recognition = session.started_at < recognized_at
+        if inactive or new_recognition:
+            # Close at the last persisted activity, not when the next request
+            # happens; otherwise idle hours/days become fake session duration.
+            session.ended_at = last_activity
+            session = None
 
     if session is None:
         session = InteractionSession(
             id=str(uuid4()),
             user_id=user_id,
             detected_emotion_summary=detected_emotion,
+            message_count=0,
         )
         db.add(session)
         await db.flush()
@@ -170,6 +234,25 @@ async def _session_history(
         .order_by(ConversationMessage.timestamp, ConversationMessage.id)
     )
     return list(result.scalars().all())
+
+
+async def _active_session_history(
+    db: AsyncSession,
+    user_id: str,
+) -> list[ConversationMessage]:
+    result = await db.execute(
+        select(InteractionSession.id)
+        .where(
+            InteractionSession.user_id == user_id,
+            InteractionSession.ended_at.is_(None),
+        )
+        .order_by(InteractionSession.started_at.desc())
+        .limit(1)
+    )
+    session_id = result.scalar_one_or_none()
+    if session_id is None:
+        return []
+    return await _session_history(db, session_id)
 
 
 async def _user_message_history(

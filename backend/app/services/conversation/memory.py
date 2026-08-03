@@ -1,3 +1,4 @@
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -10,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.base import utc_now
 from app.models.user_memory_fact import UserMemoryFact
 
+
+logger = logging.getLogger("uvicorn.error")
 
 MAX_FACT_LENGTH = 500
 DEFAULT_RELEVANT_FACT_LIMIT = 5
@@ -56,6 +59,7 @@ _CATEGORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "profile",
         re.compile(
             r"\b(?:i\s+(?:work as|study at|live in)|i(?:'m| am)\s+an?\s+"
+            r"(?:[\w-]+\s+){0,3}"
             r"(?:student|teacher|developer|designer|engineer|researcher)|"
             r"my\s+(?:name|job|role)\s+is)\b|"
             r"(?:我住在|我就读于|我的工作是)|"
@@ -104,15 +108,40 @@ def extract_memory_candidates(message_text: str) -> list[MemoryCandidate]:
         if not sentence:
             continue
         if len(sentence.split()) < 3 and not _CJK_CHARACTER.search(sentence):
+            logger.info(
+                "[memory] extraction decision=ignored reason=too_short sentence=%r",
+                sentence,
+            )
             continue
-        if len(sentence) > MAX_FACT_LENGTH or _TRANSIENT_STATE.search(sentence):
+        if len(sentence) > MAX_FACT_LENGTH:
+            logger.info(
+                "[memory] extraction decision=ignored reason=too_long sentence=%r",
+                sentence,
+            )
+            continue
+        if _TRANSIENT_STATE.search(sentence):
+            logger.info(
+                "[memory] extraction decision=ignored reason=transient_state "
+                "sentence=%r",
+                sentence,
+            )
             continue
         for category, pattern in _CATEGORY_PATTERNS:
             if pattern.search(sentence):
                 candidates.append(
                     MemoryCandidate(fact_text=sentence, category=category)
                 )
+                logger.info(
+                    "[memory] extraction decision=candidate category=%s sentence=%r",
+                    category,
+                    sentence,
+                )
                 break
+        else:
+            logger.info(
+                "[memory] extraction decision=ignored reason=no_pattern sentence=%r",
+                sentence,
+            )
     return candidates
 
 
@@ -172,6 +201,15 @@ async def get_relevant_memory_facts(
     )
     facts = list(result.scalars().all())
     relevant = rank_relevant_facts(facts, message_text, limit=limit)
+    if not relevant and limit > 0:
+        # Vague recall questions (for example, "what am I working on again?")
+        # may share no literal tokens with a stored fact. Fall back to recent
+        # facts so the LLM can decide which of a small context is relevant.
+        relevant = sorted(
+            facts,
+            key=lambda fact: fact.last_referenced_at or fact.created_at,
+            reverse=True,
+        )[:limit]
     referenced_at = utc_now()
     for fact in relevant:
         fact.last_referenced_at = referenced_at
@@ -184,8 +222,17 @@ async def remember_message_facts(
     user_id: str,
     message_text: str,
 ) -> list[UserMemoryFact]:
+    logger.info(
+        "[memory] extraction received user_id=%s message=%r",
+        user_id,
+        message_text,
+    )
     candidates = extract_memory_candidates(message_text)
     if not candidates:
+        logger.info(
+            "[memory] extraction completed user_id=%s candidates=0 stored=0",
+            user_id,
+        )
         return []
 
     result = await db.execute(
@@ -194,10 +241,23 @@ async def remember_message_facts(
     known_facts = list(result.scalars().all())
     created: list[UserMemoryFact] = []
     for candidate in candidates:
-        if any(
-            facts_are_duplicates(candidate.fact_text, fact.fact_text)
-            for fact in [*known_facts, *created]
-        ):
+        duplicate = next(
+            (
+                fact
+                for fact in [*known_facts, *created]
+                if facts_are_duplicates(candidate.fact_text, fact.fact_text)
+            ),
+            None,
+        )
+        if duplicate is not None:
+            logger.info(
+                "[memory] storage decision=duplicate user_id=%s candidate=%r "
+                "existing_fact_id=%s existing=%r",
+                user_id,
+                candidate.fact_text,
+                duplicate.id,
+                duplicate.fact_text,
+            )
             continue
         fact = UserMemoryFact(
             id=str(uuid4()),
@@ -207,6 +267,20 @@ async def remember_message_facts(
         )
         db.add(fact)
         created.append(fact)
+        logger.info(
+            "[memory] storage decision=created user_id=%s fact_id=%s "
+            "category=%s fact=%r",
+            user_id,
+            fact.id,
+            fact.category,
+            fact.fact_text,
+        )
+    logger.info(
+        "[memory] extraction completed user_id=%s candidates=%d stored=%d",
+        user_id,
+        len(candidates),
+        len(created),
+    )
     return created
 
 

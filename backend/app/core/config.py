@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 500
     conversation_context_messages: int = 20
     conversation_recognition_ttl_seconds: int = 300
+    conversation_session_inactivity_seconds: int = 1800
 
     stt_model_size: str = "base"
     stt_device: str = "cpu"

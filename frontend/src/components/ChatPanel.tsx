@@ -4,6 +4,7 @@ import {
   LockKeyhole,
   MessageCircle,
   Mic,
+  Plus,
   Square,
   Send,
   UserRound,
@@ -17,6 +18,7 @@ import { ApiError } from "../api/client";
 import {
   useConversationHistory,
   useSendConversationMessage,
+  useStartNewConversation,
 } from "../hooks/useConversationApi";
 import {
   useSynthesizeSpeech,
@@ -63,9 +65,12 @@ export function ChatPanel({
   const audioUrl = useRef<string | null>(null);
   const mutedRef = useRef(isMuted);
   const mountedRef = useRef(false);
+  const sendInFlight = useRef(false);
+  const sendAttempt = useRef(0);
 
   const history = useConversationHistory(user?.id ?? null);
   const sendMessage = useSendConversationMessage(user?.id ?? null);
+  const newConversation = useStartNewConversation(user?.id ?? null);
   const transcribe = useTranscribeAudio();
   const synthesize = useSynthesizeSpeech();
 
@@ -165,6 +170,8 @@ export function ChatPanel({
   }, [avatarConversationState, onConversationStateChange]);
 
   useEffect(() => {
+    sendAttempt.current += 1;
+    sendInFlight.current = false;
     cancelRecordingSession();
     setIsRecording(false);
     setIsStartingRecording(false);
@@ -173,6 +180,7 @@ export function ChatPanel({
     setMessage("");
     setVoiceError(null);
     sendMessage.reset();
+    newConversation.reset();
     transcribe.reset();
     synthesize.reset();
   }, [user?.id, cancelRecordingSession, releaseAudio]);
@@ -216,11 +224,15 @@ export function ChatPanel({
 
   const sendContent = useCallback(
     (input: MessageInput) => {
-      if (!user || sendMessage.isPending) return;
+      // React Query's isPending flag is render-driven, so it cannot prevent two
+      // submit events in the same tick. Lock synchronously before mutate.
+      if (!user || sendInFlight.current) return false;
+      sendInFlight.current = true;
+      const attempt = ++sendAttempt.current;
       setVoiceError(null);
       sendMessage.mutate(input, {
         onSuccess: (reply) => {
-          setMessage("");
+          if (attempt !== sendAttempt.current) return;
           if (mutedRef.current) return;
           synthesize.mutate(
             {
@@ -233,7 +245,16 @@ export function ChatPanel({
             },
           );
         },
+        onError: () => {
+          if (attempt !== sendAttempt.current || !input.message) return;
+          // Restore a failed text only when the user has not started a new draft.
+          setMessage((current) => current || input.message || "");
+        },
+        onSettled: () => {
+          if (attempt === sendAttempt.current) sendInFlight.current = false;
+        },
       });
+      return true;
     },
     [playReply, sendMessage, synthesize, user],
   );
@@ -242,7 +263,11 @@ export function ChatPanel({
     event.preventDefault();
     const content = message.trim();
     if (!content) return;
-    sendContent({ message: content });
+    if (sendContent({ message: content })) {
+      // Clear the accepted snapshot immediately. Delaying this until the reply
+      // arrives can erase or mix in text typed while the request is in flight.
+      setMessage("");
+    }
   };
 
   const stopRecording = useCallback(() => {
@@ -395,9 +420,45 @@ export function ChatPanel({
   }
 
   const messages = history.data?.messages ?? [];
-  const conversationError = history.error ?? sendMessage.error;
+  const conversationError =
+    history.error ?? sendMessage.error ?? newConversation.error;
   const speechError = transcribe.error ?? synthesize.error;
   const voiceBusy = transcribe.isPending || synthesize.isPending;
+
+  const startNewConversation = () => {
+    if (
+      !user ||
+      newConversation.isPending ||
+      sendMessage.isPending ||
+      isRecording ||
+      isStartingRecording ||
+      transcribe.isPending
+    ) {
+      return;
+    }
+    if (
+      messages.length > 0 &&
+      !window.confirm(
+        "Start a new conversation? Your previous messages will remain safely stored in history.",
+      )
+    ) {
+      return;
+    }
+
+    newConversation.mutate(undefined, {
+      onSuccess: () => {
+        sendAttempt.current += 1;
+        sendInFlight.current = false;
+        setMessage("");
+        setVoiceError(null);
+        setIsAvatarSpeaking(false);
+        releaseAudio();
+        sendMessage.reset();
+        transcribe.reset();
+        synthesize.reset();
+      },
+    });
+  };
 
   return (
     <section className="overflow-hidden rounded-[2.5rem] bg-white shadow-panel">
@@ -417,6 +478,26 @@ export function ChatPanel({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={startNewConversation}
+            disabled={
+              messages.length === 0 ||
+              newConversation.isPending ||
+              sendMessage.isPending ||
+              isRecording ||
+              isStartingRecording ||
+              transcribe.isPending
+            }
+            className="flex h-9 items-center gap-1.5 rounded-xl bg-ink/5 px-3 text-xs font-semibold text-ink/60 transition hover:bg-ink/10 hover:text-ink disabled:cursor-not-allowed disabled:opacity-35"
+          >
+            {newConversation.isPending ? (
+              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Plus className="h-3.5 w-3.5" />
+            )}
+            New conversation
+          </button>
           {sendMessage.data && (
             <span className="rounded-full bg-fern/10 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-fern">
               {sendMessage.data.detected_input_language}

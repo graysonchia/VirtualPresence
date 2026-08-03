@@ -36,6 +36,16 @@ export async function request<T>(
   return response.json() as Promise<T>;
 }
 
+export async function requestVoid(
+  path: string,
+  options?: RequestInit,
+): Promise<void> {
+  const response = await fetch(`${API_URL}${path}`, options);
+  if (!response.ok) {
+    throw await errorFromResponse(response);
+  }
+}
+
 export async function requestBlob(
   path: string,
   options?: RequestInit,

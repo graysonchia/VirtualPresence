@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -22,6 +22,15 @@ class InteractionSession(UUIDPrimaryKeyMixin, Base):
         DateTime(timezone=True), default=utc_now, nullable=False
     )
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_activity_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    message_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
     detected_emotion_summary: Mapped[str | None] = mapped_column(Text)
 
     user: Mapped["User"] = relationship(back_populates="sessions")

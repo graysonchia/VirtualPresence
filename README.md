@@ -236,8 +236,14 @@ over HTTPS for `getUserMedia`.
 | `GET` | `/face/users` | Lists enrolled users |
 | `POST` | `/conversation/message` | JSON `{ "user_id", "message" }`; returns the assistant reply and detected input language |
 | `GET` | `/conversation/users/{user_id}/history` | Full persisted message history for a recently verified user |
+| `GET` | `/conversation/users/{user_id}/history?current_session_only=true` | Messages from only the active conversation session |
+| `DELETE` | `/conversation/users/{user_id}/history` | Ends the active session without deleting persisted messages |
 | `GET` | `/memory/users/{user_id}/facts` | Lists the durable personal facts remembered for a user |
 | `DELETE` | `/memory/users/{user_id}/facts/{fact_id}` | Permanently removes one remembered fact |
+| `GET` | `/analytics/overview` | Summary usage, recognition, session, and memory metrics |
+| `GET` | `/analytics/recognition-trends?days=30` | Daily confidence, liveness, and spoof-detection trends |
+| `GET` | `/analytics/emotion-distribution` | Aggregate recognition emotion distribution |
+| `GET` | `/analytics/usage-patterns` | Daily and hourly session/message activity in UTC |
 | `PATCH` | `/users/{user_id}/settings` | Updates user settings such as `{ "preferred_voice_gender": "female" }` |
 | `POST` | `/voice/transcribe` | Multipart `audio`; returns transcript, detected language, and language confidence |
 | `POST` | `/voice/synthesize` | JSON `{ "text", "language", "user_id" }` (`user_id` optional); returns inline MP3 audio using the user's preferred voice or the male default |

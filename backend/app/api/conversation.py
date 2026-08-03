@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +18,7 @@ from app.services.conversation import (
     ConversationUserNotFoundError,
     get_llm_client,
     send_message,
+    start_new_conversation,
 )
 from app.services.conversation.chat import get_user_history
 from app.services.conversation.llm_client import (
@@ -116,12 +117,17 @@ async def create_message(
 )
 async def read_user_history(
     user_id: str,
+    current_session_only: bool = False,
     db: AsyncSession = Depends(get_db),
 ) -> ConversationHistoryResponse:
     await _get_verified_context(db, user_id)
 
     try:
-        user, messages = await get_user_history(db, user_id=user_id)
+        user, messages = await get_user_history(
+            db,
+            user_id=user_id,
+            current_session_only=current_session_only,
+        )
     except ConversationUserNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -135,3 +141,25 @@ async def read_user_history(
         messages=history,
         count=len(history),
     )
+
+
+@router.delete(
+    "/users/{user_id}/history",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="End the current conversation without deleting its history",
+)
+async def start_new_user_conversation(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    await _get_verified_context(db, user_id)
+
+    try:
+        await start_new_conversation(db, user_id=user_id)
+    except ConversationUserNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

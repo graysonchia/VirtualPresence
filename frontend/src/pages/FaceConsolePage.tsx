@@ -3,13 +3,14 @@ import {
   ScanFace,
   ShieldAlert,
   ShieldCheck,
-  Sparkles,
   XCircle,
 } from "lucide-react";
 import { lazy, Suspense, useCallback, useState } from "react";
 
 import { ApiError } from "../api/client";
 import type { ConversationAnimationState } from "../components/Avatar";
+import { AppHeader } from "../components/AppHeader";
+import type { AppView } from "../components/AppHeader";
 import { ChatPanel } from "../components/ChatPanel";
 import { ChatPanelErrorBoundary } from "../components/ChatPanelErrorBoundary";
 import { UserList } from "../components/UserList";
@@ -22,6 +23,10 @@ import {
 
 type Mode = "identify" | "enroll";
 
+interface FaceConsolePageProps {
+  onNavigate: (view: AppView) => void;
+}
+
 const AvatarPanel = lazy(() =>
   import("../components/Avatar/AvatarPanel").then((module) => ({
     default: module.AvatarPanel,
@@ -32,7 +37,7 @@ function errorMessage(error: unknown): string {
   return error instanceof ApiError ? error.message : "Something went wrong.";
 }
 
-export function FaceConsolePage() {
+export function FaceConsolePage({ onNavigate }: FaceConsolePageProps) {
   const [mode, setMode] = useState<Mode>("identify");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -95,25 +100,7 @@ export function FaceConsolePage() {
   return (
     <main className="min-h-screen px-5 py-6 sm:px-8 lg:px-10">
       <div className="mx-auto max-w-7xl">
-        <header className="flex items-center justify-between py-3">
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-ink text-lime">
-              <Sparkles className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="font-display text-lg font-bold leading-none text-ink">
-                VirtualPresence
-              </p>
-              <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-fern">
-                Recognition console
-              </p>
-            </div>
-          </div>
-          <span className="hidden items-center gap-2 rounded-full border border-ink/10 bg-white/60 px-4 py-2 text-xs font-medium text-ink/60 sm:flex">
-            <ShieldCheck className="h-4 w-4 text-fern" />
-            Phase 3 · AI conversation
-          </span>
-        </header>
+        <AppHeader currentView="console" onNavigate={onNavigate} />
 
         <section className="grid gap-7 pb-10 pt-8 lg:grid-cols-[minmax(0,1fr)_340px]">
           <div className="overflow-hidden rounded-[2.5rem] bg-white shadow-panel">
