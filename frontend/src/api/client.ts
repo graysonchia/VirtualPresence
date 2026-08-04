@@ -1,4 +1,5 @@
 import type {
+  EdgeBenchmarkResponse,
   EnrollmentResponse,
   IdentificationResponse,
   UserListResponse,
@@ -77,16 +78,24 @@ export async function enrollFace(input: {
 export async function identifyFace(input: {
   image: Blob;
   frames: Blob[];
+  edgeMode?: boolean;
 }): Promise<IdentificationResponse> {
   const form = new FormData();
   form.append("image", input.image, "webcam-capture.jpg");
   input.frames.forEach((frame, index) => {
     form.append("frames", frame, `liveness-frame-${index + 1}.jpg`);
   });
-  return request<IdentificationResponse>("/face/identify", {
-    method: "POST",
-    body: form,
-  });
+  return request<IdentificationResponse>(
+    input.edgeMode ? "/edge-face/identify-edge" : "/face/identify",
+    {
+      method: "POST",
+      body: form,
+    },
+  );
+}
+
+export function getEdgeBenchmark(): Promise<EdgeBenchmarkResponse> {
+  return request<EdgeBenchmarkResponse>("/edge-face/benchmark");
 }
 
 export function getUsers(): Promise<UserListResponse> {

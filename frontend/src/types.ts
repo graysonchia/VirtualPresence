@@ -33,6 +33,25 @@ export interface IdentificationResponse {
   liveness_confidence: number;
 }
 
+export interface EdgeInferenceProfile {
+  model_size_mb: number;
+  mean_latency_ms: number;
+  accuracy_percent: number | null;
+  model_size_metric: string;
+  precision: string;
+}
+
+export interface EdgeBenchmarkResponse {
+  standard: EdgeInferenceProfile;
+  edge_optimized: EdgeInferenceProfile;
+  sample_count: number;
+  samples_source: string;
+  size_reduction_percent: number;
+  latency_reduction_percent: number;
+  accuracy_delta_percentage_points: number | null;
+  notes: string[];
+}
+
 export interface UserListResponse {
   users: EnrolledUser[];
   count: number;

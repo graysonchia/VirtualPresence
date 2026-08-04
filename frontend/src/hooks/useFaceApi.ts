@@ -1,6 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { enrollFace, getUsers, identifyFace } from "../api/client";
+import {
+  enrollFace,
+  getEdgeBenchmark,
+  getUsers,
+  identifyFace,
+} from "../api/client";
 
 export function useEnrolledUsers() {
   return useQuery({
@@ -25,3 +30,11 @@ export function useIdentifyFace() {
   });
 }
 
+export function useEdgeBenchmark() {
+  return useQuery({
+    queryKey: ["edge-face-benchmark"],
+    queryFn: getEdgeBenchmark,
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+}

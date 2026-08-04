@@ -26,8 +26,8 @@ fastapi_app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     description=(
-        "Face enrollment, identity-aware context, and personalized "
-        "text and voice conversation API."
+        "Face enrollment, privacy-conscious edge inference, identity-aware "
+        "context, and personalized text and voice conversation API."
     ),
     debug=settings.app_debug,
     lifespan=lifespan,

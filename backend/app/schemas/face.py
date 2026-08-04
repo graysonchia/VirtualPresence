@@ -36,6 +36,35 @@ class IdentificationResponse(BaseModel):
     liveness_confidence: float = Field(ge=0.0, le=1.0)
 
 
+class EdgeInferenceProfile(BaseModel):
+    model_size_mb: float = Field(ge=0.0)
+    mean_latency_ms: float = Field(ge=0.0)
+    accuracy_percent: float | None = Field(default=None, ge=0.0, le=100.0)
+    model_size_metric: str
+    precision: str
+
+
+class EdgeBenchmarkResponse(BaseModel):
+    standard: EdgeInferenceProfile
+    edge_optimized: EdgeInferenceProfile
+    sample_count: int = Field(ge=0)
+    samples_source: str
+    size_reduction_percent: float
+    latency_reduction_percent: float
+    accuracy_delta_percentage_points: float | None = None
+    notes: list[str]
+
+
+class EdgeArchitectureSummary(BaseModel):
+    concept: str
+    deployment_scope: str
+    architecture_pattern: list[str]
+    privacy_boundary: list[str]
+    performance_tradeoffs: list[str]
+    limitations: list[str]
+    project_status: str
+
+
 class UserListResponse(BaseModel):
     users: list[EnrolledUser]
     count: int

@@ -1,5 +1,9 @@
 import {
   CheckCircle2,
+  Cpu,
+  Gauge,
+  HardDrive,
+  LockKeyhole,
   ScanFace,
   ShieldAlert,
   ShieldCheck,
@@ -17,6 +21,7 @@ import { UserList } from "../components/UserList";
 import { WebcamCapture } from "../components/WebcamCapture";
 import {
   useEnrollFace,
+  useEdgeBenchmark,
   useEnrolledUsers,
   useIdentifyFace,
 } from "../hooks/useFaceApi";
@@ -42,10 +47,12 @@ export function FaceConsolePage({ onNavigate }: FaceConsolePageProps) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [language, setLanguage] = useState("en");
+  const [edgeMode, setEdgeMode] = useState(false);
   const [conversationAnimation, setConversationAnimation] =
     useState<ConversationAnimationState>("idle");
   const enroll = useEnrollFace();
   const identify = useIdentifyFace();
+  const edgeBenchmark = useEdgeBenchmark();
   const users = useEnrolledUsers();
 
   const clearResults = () => {
@@ -56,6 +63,11 @@ export function FaceConsolePage({ onNavigate }: FaceConsolePageProps) {
   const selectMode = (nextMode: Mode) => {
     clearResults();
     setMode(nextMode);
+  };
+
+  const toggleEdgeMode = () => {
+    clearResults();
+    setEdgeMode((enabled) => !enabled);
   };
 
   const handleCapture = useCallback(
@@ -69,10 +81,10 @@ export function FaceConsolePage({ onNavigate }: FaceConsolePageProps) {
           preferredLanguage: language,
         });
       } else {
-        identify.mutate({ image, frames: additionalFrames });
+        identify.mutate({ image, frames: additionalFrames, edgeMode });
       }
     },
-    [email, enroll, identify, language, mode, name],
+    [edgeMode, email, enroll, identify, language, mode, name],
   );
 
   const activeMutation = mode === "enroll" ? enroll : identify;
@@ -132,6 +144,85 @@ export function FaceConsolePage({ onNavigate }: FaceConsolePageProps) {
                       READY
                     </span>
                   </div>
+                </div>
+
+                <div className="mt-4 rounded-3xl border border-white/10 bg-white/[0.06] p-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="flex items-center gap-2 text-xs font-semibold text-white/75">
+                        <Cpu className="h-3.5 w-3.5 text-lime" />
+                        Edge mode
+                      </p>
+                      <p className="mt-1 text-[11px] leading-4 text-white/40">
+                        Local INT8 SFace demonstration
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={edgeMode}
+                      aria-label="Use edge-optimized face identification"
+                      onClick={toggleEdgeMode}
+                      className={`relative h-7 w-12 rounded-full transition ${
+                        edgeMode ? "bg-lime" : "bg-white/15"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition ${
+                          edgeMode ? "left-6" : "left-1"
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  {edgeBenchmark.data ? (
+                    <div className="mt-4 grid grid-cols-[1fr_auto_auto] gap-x-3 gap-y-2 text-[10px]">
+                      <span className="text-white/35">Metric</span>
+                      <span className="text-right text-white/35">Standard</span>
+                      <span className="text-right font-semibold text-lime">Edge</span>
+                      <span className="flex items-center gap-1.5 text-white/55">
+                        <HardDrive className="h-3 w-3" /> Model
+                      </span>
+                      <span>{edgeBenchmark.data.standard.model_size_mb.toFixed(1)} MB</span>
+                      <span className="text-right text-lime">
+                        {edgeBenchmark.data.edge_optimized.model_size_mb.toFixed(1)} MB
+                      </span>
+                      <span className="flex items-center gap-1.5 text-white/55">
+                        <Gauge className="h-3 w-3" /> Latency
+                      </span>
+                      <span>{edgeBenchmark.data.standard.mean_latency_ms.toFixed(1)} ms</span>
+                      <span className="text-right text-lime">
+                        {edgeBenchmark.data.edge_optimized.mean_latency_ms.toFixed(1)} ms
+                      </span>
+                      <span className="flex items-center gap-1.5 text-white/55">
+                        <ScanFace className="h-3 w-3" /> Accuracy*
+                      </span>
+                      <span>
+                        {edgeBenchmark.data.standard.accuracy_percent === null
+                          ? "—"
+                          : `${edgeBenchmark.data.standard.accuracy_percent.toFixed(1)}%`}
+                      </span>
+                      <span className="text-right text-lime">
+                        {edgeBenchmark.data.edge_optimized.accuracy_percent === null
+                          ? "—"
+                          : `${edgeBenchmark.data.edge_optimized.accuracy_percent.toFixed(1)}%`}
+                      </span>
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-[10px] text-white/35">
+                      {edgeBenchmark.isLoading
+                        ? "Measuring local models…"
+                        : "Benchmark unavailable until face models are installed."}
+                    </p>
+                  )}
+                  <p className="mt-3 flex gap-1.5 text-[10px] leading-4 text-white/35">
+                    <LockKeyhole className="mt-0.5 h-3 w-3 shrink-0" />
+                    Raw frames stay inside the device boundary in a real edge
+                    deployment. This demo runs both paths on this machine.
+                  </p>
+                  <p className="mt-1 text-[9px] text-white/25">
+                    *Cosine fidelity to FP32; not population-level accuracy.
+                  </p>
                 </div>
               </div>
 
@@ -199,7 +290,11 @@ export function FaceConsolePage({ onNavigate }: FaceConsolePageProps) {
                   busy={activeMutation.isPending}
                   captureBurst={mode === "identify"}
                   actionLabel={
-                    mode === "enroll" ? "Capture & enroll" : "Identify me"
+                    mode === "enroll"
+                      ? "Capture & enroll"
+                      : edgeMode
+                        ? "Identify on edge"
+                        : "Identify me"
                   }
                   onCapture={handleCapture}
                 />

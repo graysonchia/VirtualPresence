@@ -1,19 +1,22 @@
 # VirtualPresence
 
-VirtualPresence is an AI-native virtual assistant platform. Phase 4 combines
-local face enrollment, identification, expression classification, and
-short-burst anti-spoofing with personalized Anthropic-powered text and voice
-conversation. FastAPI persists identities, recognition context, interaction
-sessions, and messages in PostgreSQL, while React provides webcam, chat,
-microphone recording, and spoken-response interfaces for end-to-end testing.
+VirtualPresence is an AI-native virtual assistant platform. Its completed core
+architecture combines local face recognition, expression classification,
+short-burst anti-spoofing, multilingual LLM conversation, a 3D emotion-aware
+avatar, personal memory/RAG, interaction analytics, and simulated edge-optimized
+biometric inference. FastAPI persists identity and interaction context in
+PostgreSQL, while React provides the demonstrable webcam, avatar, chat, memory,
+analytics, and edge-mode interfaces.
 
-This phase intentionally does **not** implement avatar rendering or lip-sync.
+Production-grade voice STT/TTS remains a known, deliberately deprioritized gap;
+the existing voice endpoints are experimental rather than a completed product
+surface.
 
 ## Stack
 
 - Backend: FastAPI, async SQLAlchemy 2.0, asyncpg, Alembic, PostgreSQL
 - Jobs: Celery with Memurai (Redis-compatible on Windows)
-- Face pipeline: OpenCV YuNet + SFace, FER+ emotion ONNX, active liveness challenge
+- Face pipeline: OpenCV YuNet + SFace, INT8 edge SFace path, FER+ emotion ONNX, active liveness challenge
 - Conversation: Anthropic Python SDK, automatic language detection, local mock mode
 - Voice: local faster-whisper STT and multilingual Microsoft Edge TTS
 - Frontend: React 19, Vite, Tailwind CSS, TanStack Query, TypeScript
@@ -218,10 +221,12 @@ Visit <http://localhost:5173>, allow camera access, then:
 
 1. Select **Enroll**, enter a name, center exactly one face, and capture.
 2. Select **Identify** and capture another frame.
-3. Review the identity, emotion, and liveness badges.
-4. After a successful live match, use the unlocked chat panel. Type a message
+3. Toggle **Edge mode** to compare local FP32 and optimized inference, then
+   capture again to exercise the INT8 path.
+4. Review the identity, emotion, and liveness badges.
+5. After a successful live match, use the unlocked chat panel. Type a message
    or tap the microphone, speak, and tap stop.
-5. The assistant reply is spoken automatically unless the speaker button is
+6. The assistant reply is spoken automatically unless the speaker button is
    muted. Messages and transcripts are restored from PostgreSQL.
 
 Camera access works on `localhost`. A non-local production site must be served
@@ -234,6 +239,9 @@ over HTTPS for `getUserMedia`.
 | `POST` | `/face/enroll` | Multipart `image`, `name`, optional `email`, optional `preferred_language` |
 | `POST` | `/face/identify` | Multipart `image` plus optional repeated `frames`; returns identity, emotion, and liveness |
 | `GET` | `/face/users` | Lists enrolled users |
+| `GET` | `/edge-face/benchmark` | Compares FP32 and edge model footprint, warmed latency, and embedding fidelity |
+| `POST` | `/edge-face/identify-edge` | Runs the normal identity, emotion, and liveness flow through bounded YuNet + INT8 SFace |
+| `GET` | `/edge-face/architecture-summary` | Structured privacy, performance, single-machine-demo, and project-status explanation |
 | `POST` | `/conversation/message` | JSON `{ "user_id", "message" }`; returns the assistant reply and detected input language |
 | `GET` | `/conversation/users/{user_id}/history` | Full persisted message history for a recently verified user |
 | `GET` | `/conversation/users/{user_id}/history?current_session_only=true` | Messages from only the active conversation session |
@@ -439,6 +447,32 @@ chronologically named images each:
 Treat those targets as a local acceptance check, not a universal accuracy
 claim. Proper PAD evaluation requires real and attack videos across multiple
 people, devices, printers, displays, and lighting conditions.
+
+## Simulated edge inference and biometric privacy
+
+The **Edge mode** toggle routes identification through a second local inference
+profile in `app/services/face/edge_inference.py`. It caps YuNet input at 320
+pixels on the longest side and uses OpenCV DNN's in-memory INT8 quantization for
+SFace. The UI compares the warmed latency, runtime parameter footprint, and
+cosine agreement with the standard FP32 embedding path on up to five locally
+stored enrollment frames. If none exist, deterministic synthetic frames provide
+a detection-only benchmark and accuracy is shown as unavailable.
+
+This is explicitly a single-machine architecture demonstration, not a claim
+that the development computer is a separate physical edge device. In a real
+camera, kiosk, or mobile deployment, capture, face detection, embeddings,
+liveness, and emotion analysis would stay inside the local device boundary. Raw
+frames would not need to cross the network; only a lightweight embedding or
+recognition result would be sent when necessary. Embeddings are still sensitive
+biometric identifiers, so encryption, consent, strict access controls, and
+retention limits remain mandatory.
+
+The reported model size is OpenCV's runtime parameter footprint. OpenCV can
+execute the quantized network in memory but does not export that network as a
+new INT8 ONNX file from this code path. Accuracy is an embedding-fidelity proxy,
+not population-level recognition accuracy, and results vary by CPU, OpenCV
+build, input frames, and enrolled users. See `/edge-face/architecture-summary`
+for the structured tradeoff and limitation statement.
 
 ## Verification
 
